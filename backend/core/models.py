@@ -45,6 +45,37 @@ class ClothRoll(models.Model):
         return f"{self.loft.name}/{self.roll_code}"
 
 
+class BladeCard(models.Model):
+    """刮胶刀片寿命卡：每登记一笔浸渍消耗 1 个刀次。"""
+
+    loft = models.ForeignKey(Loft, on_delete=models.CASCADE, related_name="blade_cards")
+    blade_batch = models.CharField(max_length=60)
+    remaining_uses = models.PositiveIntegerField()
+    voided_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-id"]
+        constraints = [
+            models.CheckConstraint(
+                check=models.Q(remaining_uses__gte=0),
+                name="bladecard_remaining_uses_non_negative",
+            ),
+            models.UniqueConstraint(
+                fields=["loft"],
+                condition=models.Q(voided_at__isnull=True),
+                name="uniq_active_bladecard_per_loft",
+            ),
+        ]
+
+    @property
+    def is_active(self):
+        return self.voided_at is None
+
+    def __str__(self):
+        return f"{self.loft.name}/{self.blade_batch} 剩{self.remaining_uses}刀次"
+
+
 class DipRun(models.Model):
     roll = models.ForeignKey(ClothRoll, on_delete=models.CASCADE, related_name="dip_runs")
     started_at = models.DateTimeField()

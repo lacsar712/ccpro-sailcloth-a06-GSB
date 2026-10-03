@@ -5,6 +5,7 @@ import api from '../api'
 const lofts = ref([])
 const rolls = ref([])
 const dips = ref([])
+const bladeCards = ref([])
 const error = ref('')
 const panelError = ref('')
 const selectedId = ref(null)
@@ -41,17 +42,25 @@ const selectedDips = computed(() => {
 
 const recentFeed = computed(() => dips.value.slice(0, 12))
 
+const bladeByLoft = computed(() => {
+  const map = {}
+  for (const c of bladeCards.value) map[c.loftId] = c
+  return map
+})
+
 async function load() {
   error.value = ''
   try {
-    const [l, r, d] = await Promise.all([
+    const [l, r, d, b] = await Promise.all([
       api.get('/lofts/'),
       api.get('/rolls/'),
       api.get('/dips/'),
+      api.get('/bladecards/', { params: { state: 'active' } }),
     ])
     lofts.value = l.data.results || l.data
     rolls.value = r.data.results || r.data
     dips.value = d.data.results || d.data
+    bladeCards.value = b.data.results || b.data
   } catch {
     error.value = '晾晒架加载失败'
   }
@@ -104,13 +113,7 @@ async function logDip() {
           : dipForm.cureHours,
       notes: dipForm.notes,
     })
-    if (selected.value.status === 'raw') {
-      try {
-        await api.patch(`/rolls/${selected.value.id}/`, { status: 'dipping' })
-      } catch {
-        /* 浸渍已记；状态跟进失败不阻断 */
-      }
-    }
+    // 后端已在同一事务内扣减刀次并把布卷置为浸渍中
     dipForm.cureHours = ''
     dipForm.notes = ''
     dipForm.startedAt = localNow()
@@ -133,7 +136,7 @@ onMounted(load)
     <header class="rack-head">
       <div>
         <h1>帆布间晾晒架</h1>
-        <p class="sub">按帆布间挂卷；点选布卷登记浸渍或标固化。固化规则：最近浸渍时长 ≥ 12 小时。</p>
+        <p class="sub">按帆布间挂卷；点选布卷登记浸渍或标固化。登记浸渍消耗该间刀片卡 1 刀次（剩 0 挡住）；固化规则：最近浸渍时长 ≥ 12 小时。</p>
       </div>
       <button class="btn secondary" type="button" @click="load">刷新架面</button>
     </header>
@@ -149,6 +152,10 @@ onMounted(load)
         <div class="bay-rail">
           <span class="bay-name">{{ group.loft.name }}</span>
           <span class="bay-meta">{{ group.loft.location || '工位' }} · {{ group.rolls.length }} 卷</span>
+          <span class="bay-meta" v-if="bladeByLoft[group.loft.id]">
+            · 刀片 {{ bladeByLoft[group.loft.id].bladeBatch }} 剩 {{ bladeByLoft[group.loft.id].remainingUses }} 刀次
+          </span>
+          <span class="bay-meta" v-else>· 无现行刀片卡</span>
         </div>
         <div class="peg-row">
           <button

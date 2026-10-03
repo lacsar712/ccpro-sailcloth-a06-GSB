@@ -58,7 +58,7 @@ onMounted(load)
 <template>
   <div>
     <h1>浸渍台账</h1>
-    <p class="sub">次要全量列表。日常浸渍请在晾晒架右侧面板登记；时长 ≥ 12 小时后方可将对应布卷标为已固化。</p>
+    <p class="sub">次要全量列表。日常浸渍请在晾晒架右侧面板登记；每笔登记消耗该间刀片卡 1 刀次，时长 ≥ 12 小时后方可将对应布卷标为已固化。</p>
     <p v-if="error" class="error">{{ error }}</p>
 
     <form class="panel row" @submit.prevent="create">

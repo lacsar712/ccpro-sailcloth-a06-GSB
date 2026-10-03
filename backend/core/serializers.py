@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from .models import ClothRoll, DipRun, Loft
+from .models import BladeCard, ClothRoll, DipRun, Loft
 from .rules import can_mark_roll_cured
 
 
@@ -60,6 +60,49 @@ class ClothRollSerializer(serializers.ModelSerializer):
             ok, msg = can_mark_roll_cured(roll)
             if not ok:
                 raise serializers.ValidationError({"status": msg})
+        return attrs
+
+
+class BladeCardSerializer(serializers.ModelSerializer):
+    loftId = serializers.PrimaryKeyRelatedField(source="loft", queryset=Loft.objects.all())
+    loftName = serializers.CharField(source="loft.name", read_only=True)
+    bladeBatch = serializers.CharField(source="blade_batch", max_length=60)
+    remainingUses = serializers.IntegerField(source="remaining_uses")
+    voidedAt = serializers.DateTimeField(source="voided_at", read_only=True)
+    isActive = serializers.SerializerMethodField()
+
+    class Meta:
+        model = BladeCard
+        fields = (
+            "id",
+            "loftId",
+            "loftName",
+            "bladeBatch",
+            "remainingUses",
+            "voidedAt",
+            "isActive",
+            "created_at",
+        )
+        read_only_fields = ("id", "loftName", "voidedAt", "isActive", "created_at")
+
+    def get_isActive(self, obj):
+        return obj.voided_at is None
+
+    def validate_remainingUses(self, value):
+        if value is None or value < 0:
+            raise serializers.ValidationError("剩余刀次必须为非负整数")
+        return value
+
+    def validate(self, attrs):
+        loft = attrs.get("loft") or getattr(self.instance, "loft", None)
+        if loft is not None:
+            qs = BladeCard.objects.filter(loft=loft, voided_at__isnull=True)
+            if self.instance:
+                qs = qs.exclude(pk=self.instance.pk)
+            if qs.exists():
+                raise serializers.ValidationError(
+                    {"loftId": "该帆布间已有现行刀片寿命卡，不能重复建卡"}
+                )
         return attrs
 
 
