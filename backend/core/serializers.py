@@ -1,7 +1,7 @@
 from rest_framework import serializers
 
-from .models import ClothRoll, DipRun, Loft
-from .rules import can_mark_roll_cured
+from .models import BladeCard, ClothRoll, DipRun, Loft
+from .rules import BladeRuleError, can_mark_roll_cured, register_dip_consuming_blade
 
 
 class LoftSerializer(serializers.ModelSerializer):
@@ -93,3 +93,57 @@ class DipRunSerializer(serializers.ModelSerializer):
             "created_at",
         )
         read_only_fields = ("id", "rollCode", "loftName", "created_at")
+
+    def create(self, validated_data):
+        try:
+            return register_dip_consuming_blade(
+                roll_id=validated_data["roll"].pk,
+                started_at=validated_data["started_at"],
+                resin_pct=validated_data["resin_pct"],
+                cure_hours=validated_data.get("cure_hours"),
+                notes=validated_data.get("notes", ""),
+            )
+        except BladeRuleError as exc:
+            raise serializers.ValidationError({"detail": str(exc)})
+
+
+class BladeCardSerializer(serializers.ModelSerializer):
+    loftId = serializers.PrimaryKeyRelatedField(source="loft", queryset=Loft.objects.all())
+    bladeBatchNo = serializers.CharField(source="blade_batch_no", max_length=60)
+    remainingUses = serializers.IntegerField(source="remaining_uses", min_value=0)
+    voidedAt = serializers.DateTimeField(source="voided_at", read_only=True, allow_null=True)
+    loftName = serializers.CharField(source="loft.name", read_only=True)
+    isActive = serializers.SerializerMethodField()
+
+    class Meta:
+        model = BladeCard
+        fields = (
+            "id",
+            "loftId",
+            "loftName",
+            "bladeBatchNo",
+            "remainingUses",
+            "isActive",
+            "voidedAt",
+            "created_at",
+        )
+        read_only_fields = ("id", "loftName", "isActive", "voidedAt", "created_at")
+
+    def get_isActive(self, obj):
+        return obj.voided_at is None
+
+    def validate(self, attrs):
+        remaining = attrs.get("remaining_uses")
+        if remaining is not None and remaining < 0:
+            raise serializers.ValidationError(
+                {"remainingUses": "剩余刀次必须为非负整数"}
+            )
+        if self.instance is None:
+            loft = attrs.get("loft")
+            if loft and BladeCard.objects.filter(
+                loft=loft, voided_at__isnull=True
+            ).exists():
+                raise serializers.ValidationError(
+                    {"loftId": "该帆布间已有现行刀片寿命卡，请先作废旧卡再新建"}
+                )
+        return attrs

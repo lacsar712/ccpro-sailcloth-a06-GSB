@@ -1,10 +1,12 @@
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
 import api from '../api'
+import { errText } from '../errText'
 
 const lofts = ref([])
 const rolls = ref([])
 const dips = ref([])
+const bladeCards = ref([])
 const error = ref('')
 const panelError = ref('')
 const selectedId = ref(null)
@@ -27,9 +29,20 @@ function localNow() {
 
 const selected = computed(() => rolls.value.find((r) => r.id === selectedId.value) || null)
 
+const bladeByLoft = computed(() => {
+  const map = {}
+  for (const c of bladeCards.value) map[c.loftId] = c
+  return map
+})
+
+const selectedBlade = computed(() =>
+  selected.value ? bladeByLoft.value[selected.value.loftId] || null : null
+)
+
 const rollsByLoft = computed(() => {
   return lofts.value.map((loft) => ({
     loft,
+    blade: bladeByLoft.value[loft.id] || null,
     rolls: rolls.value.filter((r) => r.loftId === loft.id),
   }))
 })
@@ -44,14 +57,16 @@ const recentFeed = computed(() => dips.value.slice(0, 12))
 async function load() {
   error.value = ''
   try {
-    const [l, r, d] = await Promise.all([
+    const [l, r, d, b] = await Promise.all([
       api.get('/lofts/'),
       api.get('/rolls/'),
       api.get('/dips/'),
+      api.get('/bladecards/', { params: { state: 'active' } }),
     ])
     lofts.value = l.data.results || l.data
     rolls.value = r.data.results || r.data
     dips.value = d.data.results || d.data
+    bladeCards.value = b.data.results || b.data
   } catch {
     error.value = '晾晒架加载失败'
   }
@@ -79,11 +94,10 @@ async function setStatus(status) {
     await api.patch(`/rolls/${selected.value.id}/`, { status })
     await load()
   } catch (e) {
-    const data = e.response?.data
-    panelError.value =
-      data?.status?.[0] ||
-      data?.detail ||
+    panelError.value = errText(
+      e.response?.data,
       '状态更新失败（标「已固化」需最近浸渍固化时长 ≥ 12 小时）'
+    )
   } finally {
     panelBusy.value = false
   }
@@ -94,6 +108,8 @@ async function logDip() {
   panelError.value = ''
   panelBusy.value = true
   try {
+    // 登记浸渍由后端同一事务完成：写记录 + 现行卡减 1 刀次 + 原布转浸渍中。
+    // 剩余刀次为 0 或该间无现行卡时，后端中文报错并整体回滚。
     await api.post('/dips/', {
       rollId: selected.value.id,
       startedAt: new Date(dipForm.startedAt).toISOString(),
@@ -104,22 +120,12 @@ async function logDip() {
           : dipForm.cureHours,
       notes: dipForm.notes,
     })
-    if (selected.value.status === 'raw') {
-      try {
-        await api.patch(`/rolls/${selected.value.id}/`, { status: 'dipping' })
-      } catch {
-        /* 浸渍已记；状态跟进失败不阻断 */
-      }
-    }
     dipForm.cureHours = ''
     dipForm.notes = ''
     dipForm.startedAt = localNow()
     await load()
   } catch (e) {
-    panelError.value =
-      e.response?.data?.detail ||
-      JSON.stringify(e.response?.data) ||
-      '登记浸渍失败'
+    panelError.value = errText(e.response?.data, '登记浸渍失败')
   } finally {
     panelBusy.value = false
   }
@@ -133,7 +139,7 @@ onMounted(load)
     <header class="rack-head">
       <div>
         <h1>帆布间晾晒架</h1>
-        <p class="sub">按帆布间挂卷；点选布卷登记浸渍或标固化。固化规则：最近浸渍时长 ≥ 12 小时。</p>
+        <p class="sub">按帆布间挂卷；点选布卷登记浸渍或标固化。登记浸渍消耗该间现行刀片卡 1 刀次；标「已固化」需最近浸渍时长 ≥ 12 小时。</p>
       </div>
       <button class="btn secondary" type="button" @click="load">刷新架面</button>
     </header>
@@ -149,6 +155,14 @@ onMounted(load)
         <div class="bay-rail">
           <span class="bay-name">{{ group.loft.name }}</span>
           <span class="bay-meta">{{ group.loft.location || '工位' }} · {{ group.rolls.length }} 卷</span>
+          <span
+            v-if="group.blade"
+            class="blade-pill"
+            :class="{ 'blade-empty': group.blade.remainingUses === 0 }"
+          >
+            刀片 {{ group.blade.bladeBatchNo }} · 余 {{ group.blade.remainingUses }} 刀次
+          </span>
+          <span v-else class="blade-pill blade-empty">无现行刀片卡</span>
         </div>
         <div class="peg-row">
           <button
@@ -209,6 +223,10 @@ onMounted(load)
           {{ statusLabel[selected.status] }}
         </span>
         <span class="hint">{{ selected.fabricWeightGsm }} gsm</span>
+        <span v-if="selectedBlade" class="hint">
+          刀片余 {{ selectedBlade.remainingUses }} 刀次
+        </span>
+        <span v-else class="hint">本间无现行刀片卡</span>
       </div>
       <p v-if="selected.notes" class="hint">{{ selected.notes }}</p>
       <p v-if="panelError" class="error">{{ panelError }}</p>
